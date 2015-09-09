@@ -1,0 +1,61 @@
+import sys
+import urllib2, urllib
+import argparse
+import csv
+from collections import namedtuple
+
+def setupAuth(options):
+    auth_handler = urllib2.HTTPBasicAuthHandler()
+    print options.username, options.password
+    auth_handler.add_password(realm='acs',
+        uri=options.baseurl + '/acs',
+        user=options.username,
+        passwd=options.password)
+    opener = urllib2.build_opener(auth_handler)
+    urllib2.install_opener(opener)
+
+def registerRAN(options, mgmt_ip, username, password = None):
+    params = {
+        'management_ip' : mgmt_ip,
+        'reconfigure'   : 'no',
+    }
+    if password:
+        params['password'] = password
+    if username:
+        params['username'] = username
+
+    encoded_params = urllib.urlencode(params.items())
+
+    print "Registering {user}@{mgmt_addr}".format(mgmt_addr=mgmt_ip, user=username or 'padmin')
+    try:
+        req = urllib2.urlopen(options.baseurl + '/acs/inventory/ub-ran', encoded_params)
+        print req.read()
+    except urllib2.HTTPError as e:
+        try:
+            print e.read()
+        except AttributeError:
+            print e
+            raise
+
+
+def itersource(options):
+    with open(options.csvfile) as infile:
+        reader = csv.reader(infile, delimiter=options.delimiter)
+        for line in reader:
+            yield line
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--baseurl', '-b', action='store', type=str, default='http://localhost:8000')
+    parser.add_argument('--username', '-u', action='store', type=str, default='padmin')
+    parser.add_argument('--password', '-p', action='store', type=str, default='admin')
+    parser.add_argument('csvfile', action='store', type=str)
+    parser.add_argument('--delimiter', action='store', type=str, default=';')
+    options = parser.parse_args(sys.argv[1:])
+
+    setupAuth(options)
+    for s in itersource(options):
+        registerRAN(options, *s)
+
+if __name__ == '__main__':
+    main()
