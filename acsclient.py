@@ -1,9 +1,15 @@
 import yaml
-import json
 import os
-import urllib2, urllib
 from pwd import getpwnam
 from collections import namedtuple
+import requests
+import json
+
+try:
+    import urllib3.contrib.pyopenssl
+    urllib3.contrib.pyopenssl.inject_into_urllib3()
+except ImportError:
+    pass
 
 hwconf = yaml.load(open('/opt/ubran/conf/hwinfo.conf'))
 ranconf = yaml.load(open('/opt/ubran/conf/ran.conf'))
@@ -13,29 +19,21 @@ mg = ranconf['ran_interfaces']['mg']
 mg_admin = ranconf['mg_admin']
 mg_conf = '/opt/ubran/bin/config/mg_config.sh'
 dirpath = getpwnam(mg_admin).pw_dir + r"/.ssh/"
-
+keystorage ='/opt/ubran/bin/certs/'
 
 def getAuthlib():
         payload = {'hardware_id': uid, 'system_type': 'ub-ran'}
-        encoded_args = urllib.urlencode(payload)
-        url = acsurl +'?' + encoded_args
-        url = 'http://172.16.0.165:8000/acserver/?hardware_id=42BF3C8A-DFF8-AD07-88FB-5C168CA00991&system_type=ub-ran'
-        jsonreply =urllib2.urlopen(url).read()
-        jsondict = json.loads(jsonreply)
+        r = requests.get(acsurl, params=payload, cert=(keystorage +'client.crt', keystorage +'client.key'), verify=keystorage +'ca.crt')
+
+        try:
+            jsondict = r.json()
+        except ValueError:
+            print "not json"
         return jsondict
 
 def setNetworkchange():
         os.chmod(mg_conf, 0777)
         os.popen("%s %s %s %s %s" % (mg_conf, mg, x.ip4_part.cidr_addr, x.ip4_part.gw, x.ip4_part.nameserver))
-
-def setupAuth():
-    auth_handler = urllib2.HTTPBasicAuthHandler()
-    auth_handler.add_password(realm=x.auth_part.realm,
-        uri=x.apiurl,
-        user=x.auth_part.username,
-        passwd=x.auth_part.password)
-    opener = urllib2.build_opener(auth_handler)
-    urllib2.install_opener(opener)
 
 def registerRAN():
     s = x.ip4_part.cidr_addr.split('/')[0].split('(')[0]
@@ -44,18 +42,13 @@ def registerRAN():
         'reconfigure'   : 'no',
         'username'      : mg_admin
     }
-
-    encoded_params = urllib.urlencode(params.items())
-
+    r = requests.post(x.apiurl, json=params, auth=(x.auth_part.username, x.auth_part.password), verify=False)
     try:
-        urllib2.urlopen(x.apiurl, encoded_params)
+        r.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        print "You get an HTTPError:", e.message + ", maybe device already registed"
 
-    except urllib2.HTTPError as e:
-        try:
-            print e.read()
-        except AttributeError:
-            print e
-            raise
+
 
 class ACSReply(object):
 
@@ -102,16 +95,12 @@ class ACSSshKeystore(object):
                 self.perm_key()
                 if sshkey in text:
                     return
-                else:
-                    f.write(sshkey+"\n")
+                f.write(sshkey+"\n")
 
 
 if __name__ == "__main__":
-
     x = ACSReply(getAuthlib())
     keystore = ACSSshKeystore(dirpath, mg_admin)
     keystore.add_key(x.sshkey)
     setNetworkchange()
-    setupAuth()
     registerRAN()
-s
